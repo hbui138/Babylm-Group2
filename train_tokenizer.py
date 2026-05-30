@@ -2,28 +2,7 @@ import json
 from tokenizers import Tokenizer
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
-from tokenizers.pre_tokenizers import Whitespace
-
-# Initialize a standard BPE tokenizer
-tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
-
-# Use standard whitespace splitting before applying BPE
-tokenizer.pre_tokenizer = Whitespace()
-
-UPOS_TAGS = [
-    "NOUN", "PROPN", "VERB", "ADJ", "PRON", 
-    "DET", "ADV", "ADP", "CCONJ", "PUNCT", 
-    "NUM", "PART", "INTJ", "X", "SCONJ", 
-    "AUX", "SYM"
-]
-
-# Configure the trainer with a STRICT vocab size constraint
-# 16000 is a safe sweet spot to save parameters for the Transformer layers
-trainer = BpeTrainer(
-    vocab_size=16000, 
-    special_tokens=["[UNK]", "[PAD]", "[BOS]", "[EOS]", "[SPLIT]"] + UPOS_TAGS,
-    show_progress=True,
-)
+from tokenizers import ByteLevelBPETokenizer
 
 def data_iterator(filepath):
     # Generator to stream text directly from the JSONL file to save RAM
@@ -34,11 +13,37 @@ def data_iterator(filepath):
             yield data['text_block']
             yield data['pos_block']
 
-print("Training BPE Tokenizer from scratch. This might take a minute...")
+def main():
+    # Initialize a standard BPE tokenizer
+    tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
 
-# Train the tokenizer on the fly using the generator
-tokenizer.train_from_iterator(data_iterator("phomt_hf_training_data.jsonl"), trainer=trainer)
+    # Use ByteLevelBPETokenizer for better handling of raw text and special tokens
+    tokenizer = ByteLevelBPETokenizer()
 
-# Save the trained tokenizer to disk for Ivan to use in his DataLoader
-tokenizer.save("babylm_bilingual_tokenizer.json")
-print("Tokenizer trained and saved successfully!")
+    UPOS_TAGS = [
+        "NOUN", "PROPN", "VERB", "ADJ", "PRON", 
+        "DET", "ADV", "ADP", "CCONJ", "PUNCT", 
+        "NUM", "PART", "INTJ", "X", "SCONJ", 
+        "AUX", "SYM"
+    ]
+
+    special_tokens = ["[UNK]", "[PAD]", "[BOS]", "[EOS]", "[SPLIT]"] + UPOS_TAGS
+
+    # Configure the trainer
+    trainer = BpeTrainer(
+        vocab_size=16000, 
+        special_tokens=special_tokens,
+        show_progress=True,
+    )
+
+    print("Training BPE Tokenizer from scratch. This might take a minute...")
+
+    # Train the tokenizer
+    tokenizer.train_from_iterator(data_iterator("sorted_bilingual_training_data.jsonl"), trainer=trainer)
+
+    # Save the trained tokenizer
+    tokenizer.save("babylm_bilingual_tokenizer.json")
+    print("Tokenizer trained and saved successfully!")
+
+if __name__ == "__main__":
+    main()
