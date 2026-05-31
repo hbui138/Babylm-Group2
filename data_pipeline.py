@@ -20,10 +20,10 @@ nlp_vi = phonlp.load(save_dir=save_dir)
 
 # 3. Mapping PhoNLP specific POS tags to Universal POS (UPOS) standard
 PHONLP_TO_UPOS_MAP = {
-    "N": "NOUN", "Np": "PROPN", "Nc": "NOUN", "Nu": "NOUN", "Ny": "NOUN",
-    "V": "VERB", "A": "ADJ", "P": "PRON", "L": "DET", "R": "ADV",
+    "N": "NOUN", "Np": "PROPN", "Nc": "NOUN", "Nb": "NOUN", "Nu": "NOUN", "Ny": "NOUN",
+    "V": "VERB", "Vb": "VERB", "A": "ADJ", "P": "PRON", "L": "DET", "R": "ADV",
     "E": "ADP", "C": "CCONJ", "CH": "PUNCT", "M": "NUM", "T": "PART",
-    "I": "INTJ", "X": "X", "Z": "X"
+    "I": "INTJ", "X": "X", "Z": "X", "Y": "NOUN"
 }
 
 def get_vietnamese_upos(vi_text):
@@ -44,6 +44,7 @@ def process_translation_pair(en_text, vi_text):
     # Calculate exact word (token) count based on NLP engine outputs
     # Add +1 for the [SPLIT] token in each block
     total_tokens = len(en_upos) + len(vi_upos) + 2
+    en_token_count = len(en_upos)
     
     text_block = f"{en_text} \n\n {vi_text} [SPLIT]"
     pos_block = f"{' '.join(en_upos)} \n\n {' '.join(vi_upos)} [SPLIT]"
@@ -51,6 +52,9 @@ def process_translation_pair(en_text, vi_text):
     return {
         "score": complexity_score,
         "word_count": total_tokens,
+        "en_word_count": en_token_count,
+        "en_text": en_text,
+        "en_pos": " ".join(en_upos),
         "text_block": text_block,
         "pos_block": pos_block
     }
@@ -107,7 +111,8 @@ def main():
     # Load the entire train split. We will stop it dynamically.
     dataset = load_dataset("ura-hcmut/PhoMT", split="train")
     
-    output_filename = "bilingual_training_data.jsonl"
+    output_bilingual = "bilingual_training_data.jsonl"
+    output_english = "english_only_training_data.jsonl"
 
     # Define buckets for skewed curriculum sampling
     easy_bucket = []    # Score 0-1 (Simple telegraphic structures)
@@ -151,14 +156,68 @@ def main():
     print("Extracting Stage 2 dataset (9M words with balanced complexity)...")
     stage2_data, s2_words = sample_from_buckets(easy_bucket, medium_bucket, hard_bucket, STAGE2_TARGET, stage_id=2)
     
-    print(f"Writing final structured file: {output_filename}")
-    with open(output_filename, "w", encoding="utf-8") as f_out:
+    print(f"Writing final structured file: {output_bilingual}")
+    with open(output_bilingual, "w", encoding="utf-8") as f_out:
         for item in stage1_data:
             f_out.write(json.dumps(item, ensure_ascii=False) + "\n")
         for item in stage2_data:
             f_out.write(json.dumps(item, ensure_ascii=False) + "\n")
             
-    print(f"Data engineering complete. Stage 1: {s1_words} words | Stage 2: {s2_words} words.")
+    print(f"Data engineering complete for bilingual data. Stage 1: {s1_words} words | Stage 2: {s2_words} words.")
+
+    print("\nExtracting English-only dataset (Target: 10M words)...")
+    ENG_TARGET = 10_000_000
+    english_dataset = []
+    eng_word_count = 0
+    
+    # Reuse the English sentences from the bilingual set to guarantee overlap
+    bilingual_combined = stage1_data + stage2_data
+    for item in bilingual_combined:
+        # Break immediately without adding if the next line exceeds target
+        if eng_word_count + item["en_word_count"] > ENG_TARGET:
+            break
+        english_dataset.append({"text": item["en_text"], "pos": item["en_pos"]})
+        eng_word_count += item["en_word_count"]
+        
+    print(f"Overlap extracted: {eng_word_count} English words from the bilingual set.")
+
+    # Sample additional English sentences until we hit the 10M word target, using the same skewed curriculum approach
+    while eng_word_count < ENG_TARGET:
+        if not easy_bucket and not medium_bucket and not hard_bucket:
+            break
+            
+        pool = []
+        weights = []
+        if easy_bucket:
+            pool.append('easy')
+            weights.append(0.60)
+        if medium_bucket:
+            pool.append('medium')
+            weights.append(0.30)
+        if hard_bucket:
+            pool.append('hard')
+            weights.append(0.10)
+            
+        total_w = sum(weights)
+        weights = [w / total_w for w in weights]
+        
+        chosen = random.choices(pool, weights=weights, k=1)[0]
+        
+        if chosen == 'easy': item = easy_bucket.pop()
+        elif chosen == 'medium': item = medium_bucket.pop()
+        else: item = hard_bucket.pop()
+            
+        # Break immediately without adding if the next line exceeds target
+        if eng_word_count + item["en_word_count"] > ENG_TARGET:
+            break
+            
+        english_dataset.append({"text": item["en_text"], "pos": item["en_pos"]})
+        eng_word_count += item["en_word_count"]
+
+    print(f"Writing final English-only file: {output_english}")
+    with open(output_english, "w", encoding="utf-8") as f_out:
+        for item in english_dataset:
+            f_out.write(json.dumps(item, ensure_ascii=False) + "\n")
 
 if __name__ == "__main__":
     main()
