@@ -1,7 +1,4 @@
 import json
-from tokenizers import Tokenizer
-from tokenizers.models import BPE
-from tokenizers.trainers import BpeTrainer
 from tokenizers import ByteLevelBPETokenizer
 
 def data_iterator(filepath):
@@ -14,9 +11,6 @@ def data_iterator(filepath):
             yield data['pos_block']
 
 def main():
-    # Initialize a standard BPE tokenizer
-    tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
-
     # Use ByteLevelBPETokenizer for better handling of raw text and special tokens
     tokenizer = ByteLevelBPETokenizer()
 
@@ -27,21 +21,14 @@ def main():
         "AUX", "SYM"
     ]
 
-    special_tokens = ["[UNK]", "[PAD]", "[BOS]", "[EOS]", "[SPLIT]"] + UPOS_TAGS
+    special_tokens = ["<|endoftext|>", "[PAD]", "[SPLIT]"] + UPOS_TAGS
 
-    # Configure the trainer
-    trainer = BpeTrainer(
-        vocab_size=16000, 
-        special_tokens=special_tokens,
-        show_progress=True,
+    tokenizer.train_from_iterator(
+        data_iterator("sorted_bilingual_training_data.jsonl"), 
+        vocab_size=32000,
+        min_frequency=2,
+        special_tokens=special_tokens
     )
-
-    print("Training BPE Tokenizer from scratch. This might take a minute...")
-
-    # Train the tokenizer
-    tokenizer.train_from_iterator(data_iterator("sorted_bilingual_training_data.jsonl"), trainer=trainer)
-
-    # Save the trained tokenizer
     tokenizer.save("babylm_bilingual_tokenizer.json")
     print("Tokenizer trained and saved successfully!")
 

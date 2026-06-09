@@ -37,9 +37,25 @@ def process_translation_pair(en_text, vi_text):
     en_upos = [token.pos_ for token in doc_en]
     vi_upos = get_vietnamese_upos(vi_text)
     
-    verb_count = en_upos.count("VERB")
-    sconj_count = en_upos.count("SCONJ")
-    complexity_score = verb_count + (sconj_count * 2)
+    # verb_count = en_upos.count("VERB")
+    # sconj_count = en_upos.count("SCONJ")
+    # cconj_count = en_upos.count("CCONJ")
+    # en_length = len(en_upos) if len(en_upos) > 0 else 1
+    # complexity_score = (verb_count * 1.0 + sconj_count * 3.0 + cconj_count * 1.5) / en_length
+
+    # Calculate score for English
+    en_length = len(en_upos) if len(en_upos) > 0 else 1
+    en_hard = en_upos.count("SCONJ") * 3.0 + en_upos.count("AUX") * 2.0
+    en_medium = en_upos.count("CCONJ") * 1.5 + en_upos.count("VERB") * 1.0
+    en_score = (en_hard + en_medium) / en_length
+    
+    # Calculate score for Vietnamese (Substituting AUX with PART for tense/voice markers)
+    vi_length = len(vi_upos) if len(vi_upos) > 0 else 1
+    vi_hard = vi_upos.count("SCONJ") * 3.0 + vi_upos.count("PART") * 2.0
+    vi_medium = vi_upos.count("CCONJ") * 1.5 + vi_upos.count("VERB") * 1.0
+    vi_score = (vi_hard + vi_medium) / vi_length
+
+    complexity_score = (en_score + vi_score) / 2.0
     
     # Calculate exact word (token) count based on NLP engine outputs
     # Add +1 for the [SPLIT] token in each block
@@ -57,6 +73,50 @@ def process_translation_pair(en_text, vi_text):
         "en_pos": " ".join(en_upos),
         "text_block": text_block,
         "pos_block": pos_block
+    }
+
+def calculate_dataset_scores(examples):
+    """Batch processing function for Hugging Face multiprocessing."""
+    scores, word_counts, en_word_counts = [], [], []
+    en_pos_list, pos_blocks, text_blocks = [], [], []
+    
+    for en_text, vi_text in zip(examples['en'], examples['vi']):
+        en_text = en_text.strip() if en_text else ""
+        vi_text = vi_text.strip() if vi_text else ""
+        
+        if not en_text or not vi_text:
+            scores.append(-1.0)
+            word_counts.append(0)
+            en_word_counts.append(0)
+            en_pos_list.append("")
+            pos_blocks.append("")
+            text_blocks.append("")
+            continue
+            
+        try:
+            res = process_translation_pair(en_text, vi_text)
+            scores.append(res['score'])
+            word_counts.append(res['word_count'])
+            en_word_counts.append(res['en_word_count'])
+            en_pos_list.append(res['en_pos'])
+            text_blocks.append(res['text_block'])
+            pos_blocks.append(res['pos_block'])
+        except Exception:
+            # Catch arbitrary NLP parsing errors and flag for removal
+            scores.append(-1.0)
+            word_counts.append(0)
+            en_word_counts.append(0)
+            en_pos_list.append("")
+            pos_blocks.append("")
+            text_blocks.append("")
+            
+    return {
+        "score": scores, 
+        "word_count": word_counts, 
+        "en_word_count": en_word_counts,
+        "en_pos": en_pos_list,
+        "text_block": text_blocks,
+        "pos_block": pos_blocks
     }
 
 def sample_from_buckets(easy_b, med_b, hard_b, target_words, stage_id):
@@ -114,30 +174,41 @@ def main():
     output_bilingual = "bilingual_training_data.jsonl"
     output_english = "english_only_training_data.jsonl"
 
-    # Define buckets for skewed curriculum sampling
-    easy_bucket = []    # Score 0-1 (Simple telegraphic structures)
-    medium_bucket = []  # Score 2-3 (Moderate complexity)
-    hard_bucket = []    # Score >= 4 (Complex clause embedding)
+    optimal_cores = max(1, os.cpu_count() - 1)
+    print(f"Scoring 3M rows in parallel using {optimal_cores} CPU cores...")
     
-    for item in tqdm(dataset, desc="Processing rows"):
-        en_str = item.get('en', '').strip()
-        vi_str = item.get('vi', '').strip()
+    scored_dataset = dataset.map(
+        calculate_dataset_scores, 
+        batched=True, 
+        batch_size=500, 
+        num_proc=optimal_cores, 
+        desc="Scoring Complexity"
+    )
+    
+    # Filter out broken or empty rows
+    valid_dataset = scored_dataset.filter(lambda x: x["score"] != -1.0)
+    
+    # Distribute data into difficulty buckets
+    print("Distributing data into buckets...")
+    easy_bucket, medium_bucket, hard_bucket = [], [], []
+    
+    for item in tqdm(valid_dataset, desc="Bucketing"):
+        row_data = {
+            "score": item["score"],
+            "word_count": item["word_count"],
+            "en_word_count": item["en_word_count"],
+            "en_text": item["en"],
+            "en_pos": item["en_pos"],
+            "text_block": item["text_block"],
+            "pos_block": item["pos_block"]
+        }
         
-        if not en_str or not vi_str:
-            continue
-            
-        try:
-            row_data = process_translation_pair(en_str, vi_str)
-            score = row_data["score"]
-            
-            if score <= 1:
-                easy_bucket.append(row_data)
-            elif score <= 3:
-                medium_bucket.append(row_data)
-            else:
-                hard_bucket.append(row_data)
-        except Exception:
-            continue
+        if row_data["score"] < 0.2:
+            easy_bucket.append(row_data)
+        elif row_data["score"] <= 0.35:
+            medium_bucket.append(row_data)
+        else:
+            hard_bucket.append(row_data)
 
     print(f"\nBucketing Summary: Easy={len(easy_bucket)}, Medium={len(medium_bucket)}, Hard={len(hard_bucket)}")
     
