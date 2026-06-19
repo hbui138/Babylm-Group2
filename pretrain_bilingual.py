@@ -1,4 +1,6 @@
 import os
+import torch
+from torch.utils.data import SequentialSampler
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
@@ -9,15 +11,17 @@ from transformers import (
 )
 from datasets import load_dataset, concatenate_datasets
 
+# Custom Trainer to disable automatic shuffling for Curriculum Learning
+class CurriculumTrainer(Trainer):
+    def _get_train_sampler(self, dataset=None) -> torch.utils.data.Sampler:
+        # Enforce strict sequential order to keep Phase 1 structure (POS -> Text)
+        target_dataset = dataset if dataset is not None else self.train_dataset
+        return SequentialSampler(target_dataset)
+    
 def main():
     # Setup Tokenizer
     tokenizer = PreTrainedTokenizerFast(tokenizer_file="babylm_bilingual_tokenizer.json")
-    tokenizer.add_special_tokens({
-        "pad_token": "[PAD]",
-        "bos_token": "[BOS]",
-        "eos_token": "[EOS]",
-        "unk_token": "[UNK]"
-    })
+    tokenizer.add_special_tokens({'pad_token': '<|endoftext|>'})
 
     # Setup Model Architecture
     model_id = "BabyLM-community/babylm-baseline-10m-gpt2"
@@ -28,7 +32,7 @@ def main():
     model = AutoModelForCausalLM.from_config(config)
 
     # Setup Dataset
-    full_dataset = load_dataset("json", data_files="sorted_bilingual_training_data.jsonl", split="train")
+    full_dataset = load_dataset("json", data_files="data/sorted_bilingual_training_data.jsonl", split="train")
 
     # Separate raw datasets strictly using pre-defined pipeline tags
     print("Filtering datasets into training partitions...")
@@ -37,10 +41,10 @@ def main():
 
     # Tokenization subroutines
     def tokenize_pos(examples):
-        return tokenizer(examples["pos_block"], truncation=True, max_length=128, padding="max_length")
+        return tokenizer(examples["pos_block"], truncation=True, max_length=256, padding="max_length")
 
     def tokenize_text(examples):
-        return tokenizer(examples["text_block"], truncation=True, max_length=128, padding="max_length")
+        return tokenizer(examples["text_block"], truncation=True, max_length=256, padding="max_length")
 
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
@@ -57,16 +61,15 @@ def main():
 
     phase1_args = TrainingArguments(
         output_dir="./babylm_phase1_output",
-        overwrite_output_dir=True,
         num_train_epochs=1,
         per_device_train_batch_size=8,
-        save_steps=2000,
+        save_strategy="no",
         logging_steps=100,
         prediction_loss_only=True,
         fp16=True,
     )
 
-    trainer_phase1 = Trainer(
+    trainer_phase1 = CurriculumTrainer(
         model=model,
         args=phase1_args,
         data_collator=data_collator,
@@ -74,7 +77,7 @@ def main():
     )
     
     trainer_phase1.train()
-    trainer_phase1.save_model("./babylm_phase1_final")
+    trainer_phase1.save_model("./babylm_phase1_bilingual")
     print("Phase 1 completed.")
 
     # =========================================================================
@@ -83,7 +86,7 @@ def main():
     print("\n=== RUNNING PHASE 2: FULL LEXICAL IMMERSION (TEXT) ===")
     
     # Load model from the previous structural bootstrap checkpoint
-    model = AutoModelForCausalLM.from_pretrained("./babylm_phase1_final")
+    model = AutoModelForCausalLM.from_pretrained("./babylm_phase1_bilingual")
     
     # Tokenize the 9M word subset using the actual natural language text stream
     phase2_dataset = full_dataset.map(tokenize_text, batched=True, remove_columns=full_dataset.column_names)
@@ -93,10 +96,9 @@ def main():
 
     phase2_args = TrainingArguments(
         output_dir="./babylm_phase2_output",
-        overwrite_output_dir=True,
         num_train_epochs=9,
         per_device_train_batch_size=8,
-        save_steps=2000,
+        save_strategy="no",
         logging_steps=100,
         prediction_loss_only=True,
         fp16=True,
@@ -110,8 +112,8 @@ def main():
     )
 
     trainer_phase2.train()
-    trainer_phase2.save_model("./babylm_pretrain_final")
-    print("Phase 2 training complete. Finished model generated.")
+    trainer_phase2.save_model("./babylm_pretrain_bilingual")
+    print("Phase 2 completed.")
 
 if __name__ == "__main__":
     main()

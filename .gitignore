@@ -4,6 +4,11 @@ __pycache__/
 *$py.class
 
 /phonlp_weights/
+/*.sh
+logs/
+models/
+data/
+*.json
 
 # C extensions
 *.so

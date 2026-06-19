@@ -1,14 +1,22 @@
 from transformers import PreTrainedTokenizerFast
 
-# Load the newly trained tokenizer
-tokenizer = PreTrainedTokenizerFast(tokenizer_file="babylm_bilingual_tokenizer.json")
-tokenizer.add_special_tokens({'pad_token': '<|endoftext|>'})
+def main():
+    # Load the newly trained tokenizer
+    tokenizer = PreTrainedTokenizerFast(tokenizer_file="babylm_joint_tokenizer.json")
+    
+    # Add the special padding token
+    tokenizer.add_special_tokens({'pad_token': '<|endoftext|>'})
 
-# Test a bilingual sentence with your specific format
-test_sentence = "Tôi không thể thấy gì. \n\n I can't see anything. [SPLIT]"
-tokens = tokenizer.tokenize(test_sentence)
-print(tokens)
+    # 1. Test bilingual text (English first, Vietnamese second)
+    test_sentence = "I can't see anything. \n\n Tôi không thể thấy gì. [SPLIT]"
+    tokens = tokenizer.tokenize(test_sentence)
+    print("Text tokens:", tokens)
 
-# Test a POS tag sentence
-test_pos = "PRON ADV VERB PRON PUNCT \n\n PRON AUX PART VERB PRON PUNCT [SPLIT]"
-print(tokenizer.tokenize(test_pos))
+    # 2. Test POS tags (English POS first, Vietnamese POS second)
+    test_pos = "PRON AUX PART VERB PRON PUNCT \n\n PRON ADV VERB PRON PUNCT [SPLIT]"
+    pos_tokens = tokenizer.tokenize(test_pos)
+    print("POS tokens:", pos_tokens)
+
+if __name__ == "__main__":
+    # Execute the main program logic
+    main()
