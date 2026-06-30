@@ -56,8 +56,11 @@ def main():
             if not text_str:
                 continue
                 
-            pos_tags = [token.pos_ for token in doc]
-            pos_str = " ".join(pos_tags)
+            upos_tags = [token.pos_ for token in doc]
+            pos_str = " ".join(upos_tags)
+
+            english_pos_tags = [token.tag_ for token in doc]
+            english_pos_str = " ".join(english_pos_tags)
             
             # Apply the requested scoring function
             length, score = calculate_metrics(pos_str)
@@ -65,6 +68,7 @@ def main():
             record = {
                 "text": text_str,
                 "pos": pos_str,
+                "english_pos": english_pos_str,
                 "length": length,
                 "score": score
             }

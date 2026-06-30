@@ -9,6 +9,7 @@ logs/
 models/
 data/
 *.json
+images/
 
 # C extensions
 *.so

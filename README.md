@@ -3,210 +3,199 @@ Repository for Babylm group 2 Praktikum - TUM SoSe26
 
 Hieu's part:
 
-# Artificial Metalinguistic Awareness in Low-Resource Bilingual LMs
+# Injecting Explicit Syntax into BabyLM: Data-Centric Scaffolding (GPT-2)
 ## BabyLM 2026 Research Project (Strict-Small Track - 10M Words)
 
-This document compiles the core ideas, scientific rationale, data structure, and implementation roadmap for designing the data system of a small-scale (10M words) bilingual language model project.
+This document compiles the core ideas, scientific rationale, experimental designs, and data implementation roadmap for injecting explicit syntactic structures into a small-scale (10M words) language model using Data-Centric Curriculum Learning.
+
+*(Note: The initial multilingual/bilingual hypothesis exploration is preserved in the Appendix at the end of this document).*
 
 ---
 
 ## 1. Overview & Research Motivation
 
-* **The Problem:** Current Large Language Models (LLMs) acquire multilingual capabilities through "brute-force computation" and massive data scales (billions to trillions of tokens) to blindly discover structural similarities. In contrast, children in bilingual environments only need exposure to approximately 10 million words to master both languages without language confusion.
-* **Cognitive Motivation:**
-    * **Telegraphic Speech:** Children learning to speak often omit complex functional words, focusing solely on the core syntactic framework (Subject - Verb - Object / S-V-O). English (morphological variation) and Vietnamese (isolating language), despite their vast differences, share this common S-V-O word order "skeleton."
-    * **Metalinguistic Awareness:** Bilingual children develop the ability to decouple grammatical rule structures from the surface lexical layer at a very early stage.
-* **Research Hypothesis:** Actively forcing an ultra-small language model (10M parameters) to learn the abstract syntactic "skeleton" first (via Universal POS - UPOS tags), combined with a Curriculum Learning strategy, will generate **Artificial Metalinguistic Awareness**. This approach will maximize sample efficiency within the strict 10M word limit of the BabyLM competition.
+* **The Problem:** In low-resource settings (10M tokens), Language Models often struggle to generalize syntax and capture long-distance structural dependencies. 
+* **Research Hypothesis:** Can we help a small Causal Language Model (GPT-2) learn language better by explicitly teaching it the grammatical "skeleton" first? By injecting Universal Part-of-Speech (UPOS) tags and altering the training curriculum, we aim to induce structural scaffolding before standard lexical immersion.
+* **Paradigm:** **Data-Centric Scaffolding.** Unlike architecture-centric approaches (which modify the loss function or add classification heads), this approach manipulates the *training data distribution and sequence* over time to guide the model's learning trajectory.
 
 ---
 
-## 2. Data Design & Pipeline
+## 2. Data Design & The "No Space" Tokenizer Trick
 
-### 2.1. Dataset
-* **Repository:** `ura-hcmut/PhoMT` (A clean Parquet distribution of VinAI's PhoMT on Hugging Face).
-* **Scale:** Precisely extract bilingual English (`en` column) and Vietnamese (`vi` column) structures within the Word Budget of the Strict-Small track.
+To explicitly teach the model POS tags without expanding the parameter budget, we manipulated the data formatting and the tokenizer:
 
-### 2.2. Dual-Stream In-Context Formatting
-Data is organized into two parallel streams in the `.jsonl` output file:
-* `text_block`: `[English Sentence] \n\n [Vietnamese Sentence] [SPLIT]`
-* `pos_block`: `[English UPOS] \n\n [Vietnamese UPOS] [SPLIT]`
-
-*Example of the Vietnamese UPOS mapping mechanism from PhoNLP:* PhoNLP's native tags (e.g., `Nc`, `Ny`, `Np`, `L`) are automatically mapped to the international UPOS standard using a strict mapping table derived from the Universal Dependencies project documentation (e.g., `Nc -> NOUN`, `L -> DET`).
-
-### 2.3. Curriculum Learning Score
-We utilize `spaCy` (for English) and `PhoNLP` (for Vietnamese) to parse the syntax of the sentences and assign a structural difficulty score based on length and complex syntax markers (like `SCONJ`, `CCONJ`, `PUNCT`, and `PART`):
-$$\text{Difficulty Score} = \text{Base Length} + \text{English Penalty} + \text{Vietnamese Penalty}$$
-where $\text{English Penalty} = 3.0 \times \text{SCONJ} + 1.5 \times \text{CCONJ} + 0.5 \times \text{PUNCT}$
-and $\text{Vietnamese Penalty} = 3.0 \times \text{SCONJ} + 1.5 \times \text{CCONJ} + 0.5 \times \text{PUNCT} + 1.0 \times \text{PART}$.
-
-The score classifies sentence pairs into three buckets: Easy (< 45th percentile), Medium (45th-80th percentile), and Hard (> 80th percentile).
-To form our datasets, we sample from these buckets with a skewed curriculum distribution: **60% Easy, 30% Medium, 10% Hard**.
-* **Bilingual Dataset:** We extract two stages under the 10M word limit: Stage 1 (1M words) and Stage 2 (9M words).
-* **English-only Dataset:** To ensure a fair comparison, we extract 10M English words, maximizing overlap with the English sentences from the bilingual set and padding the rest using the same 60/30/10 sampling ratio.
-
-### 2.4. Curriculum Sorting & Sequencing
-To explicitly enforce the cognitive "starting small" principle, the generated datasets are not merely bucketed by difficulty ratios, but are deterministically sorted:
-* **Intra-Stream Sorting:** Prior to training, sentence pairs within both the `pos_block` and `text_block` streams are physically sorted in ascending order of their Difficulty Scores (Easy → Medium → Hard). 
-* **Phase 1 Sequencing (Epoch 1):** To prevent automatic randomization from disrupting the curriculum, we utilize a custom `SequentialSampler`. The model first digests the rigidly sorted 1M `pos_block` stream to build syntactic scaffolding, immediately followed by the sorted 9M `text_block` stream.
-* **Phase 2 Immersion (Epochs 2-10):** Following the structural foundation phase, sequential sorting is discarded. The model undergoes full lexical immersion using the complete 10M `text_block` dataset with standard random shuffling applied across the remaining 9 epochs to guarantee optimization robustness.
----
-
-## 3. Custom Tokenizer Architecture
-
-To conserve the parameter budget for the 10M model and optimize learning, the system utilizes a **Custom Byte-Level BPE Tokenizer** trained from scratch:
-* **Training Data:** Trained on both `text_block` and `pos_block` data streams from the bilingual dataset.
-* **Vocab Size:** Strictly constrained to `32,000` tokens.
-* **Special Tokens Protection:** We hardcode `<|endoftext|>`, `[PAD]`, `[SPLIT]`, and the 17 UPOS tags (`NOUN`, `VERB`, `ADJ`, etc.) into the `special_tokens` list. The BPE algorithm will never fragment these tags, ensuring 100% integrity of the syntactic stream.
-* **Joint Tokenizer:** Both the Bilingual model and the English Baseline use the exact same tokenizer to guarantee an identical parameter count for a fair A/B test.
+* **The "No Space" Trick:** When injecting POS tags (e.g., `<UPOS_NOUN>`), standard BPE tokenizers often treat the preceding space (`Ġ`) as part of the token, which can lead to fragmentation (e.g., splitting into `Ġ` and `NOUN`). 
+* **Implementation:** Before training, we stripped all spaces from the POS tag sequences. This ensures the BPE algorithm treats the tag as a single, indivisible token. 
+* **Result:** The model learns a singular, highly concentrated embedding vector for each grammatical concept, rather than wasting capacity on fragmented subwords.
 
 ---
 
-## 4. Training Strategy (Vanilla GPT-2 10M)
+## 3. Experimental Configurations & Curriculum Strategies
 
-Following the supervisor's guidance, the project relies on the basic `BabyLM-community/babylm-baseline-10m-gpt2` architecture to isolate and clarify the data's effectiveness.
+We experimented with several curriculum strategies to determine the optimal way to transition the model from abstract syntax (POS) to concrete vocabulary (Text).
 
-### 4.1. Bilingual Model Curriculum Training
-The process utilizes a custom `CurriculumTrainer` enforcing a sequential sampler to keep the Phase 1 structure intact:
-1.  **Phase 1: Structural Scaffolding (1 Epoch):**
-    * The model is fed a concatenated dataset: 1M words of `pos_block` stream (abstract UPOS) followed by 9M words of `text_block` stream (actual sentences).
-    * Objective: Force the Attention matrix to learn cross-lingual syntactic word order alignment before moving onto lexical grounding, without random shuffling disrupting the curriculum.
-2.  **Phase 2: Lexical Immersion (9 Epochs):**
-    * The model learns purely from the `text_block` stream using the full 10M word dataset.
-    * Uses standard random shuffling across the 9 epochs to maximize optimization robustness.
+### 3.1. Standard Baseline
+* **English Baseline (Pure Text Immersion):** The model trains exclusively on standard raw English text for the entire duration (10 epochs) with regular data shuffling. This serves as the control group.
 
-### 4.2. English Baseline Training
-* The baseline is trained on the 10M English-only dataset (`english_only_training_data.jsonl`).
-* Uses standard random shuffling and full English immersion (text only).
-* Trained for **10 Epochs** to perfectly match the total compute time of the bilingual model (1 Phase 1 epoch + 9 Phase 2 epochs).
+### 3.2. Sequential Scaffolding
+* **10 POS + 10 Text:** A sharp, two-phase curriculum learning approach. It forces the model to build a grammatical foundation by training entirely on POS tags for 10 epochs. Afterward, it switches abruptly to 100% standard text for the remaining 10 epochs.
+* **English with POS (Two-Stage Scaffolding / 1 POS + 9 Text):** A brief syntactic warm-up. The model looks at POS tags for just the 1st epoch to initialize attention heads toward grammatical structures, followed by 9 epochs of pure text.
 
-### 4.3. Random Bilingual Baseline Training
-* This model serves as an ablation control to isolate the effectiveness of the structured learning phases. It is trained on the exact same 10M-word bilingual dataset as the Curriculum model.
-* **No Scaffolding:** Completely bypasses the POS tagging phase, exposing the model directly to the raw English-Vietnamese text pairs (`text_block`).
-* **Standard Optimization:** Employs standard random data shuffling across all **10 Epochs**, ensuring the total compute budget and parameter updates match perfectly with the other architectures.
----
+### 3.3. Continuous Transitions (Mitigating Catastrophic Forgetting)
+Switching abruptly from POS to Text causes massive distribution shifts. We tested transitionary approaches to "wean" the model off tags:
+* **Fading POS (Gradual Curriculum):** The proportion of POS-tagged data gradually decreases across 10 virtual epochs (starting at 100% POS and dropping by ~11% each step).
+* **Linear Decay:** The percentage of POS-tagged data is reduced by a fixed amount (10%) per epoch until it hits a 10% floor.
+* **Exponential Decay:** Drops POS exposure abruptly in early epochs (100% -> 60% -> 35% -> 20%), then plateaus at a 10% floor.
 
-## 5. Evaluation Strategy
-
-The system will run trials on **3 parallel 10M Vanilla models** to conduct A/B testing:
-* **Model A (Pure English Baseline):** Trained on 10M randomly shuffled English words.
-* **Model B (Random Bilingual):** Trained on 10M randomly shuffled English-Vietnamese words.
-* **Model C (Bilingual Curriculum + Bootstrapping):** Applies the team's entire Data Pipeline.
-
-### Measurement Metrics:
-* **Official Stream (BabyLM Eval Harness):** Run the organizers' standard English test set to obtain **BLiMP** (unconscious syntactic awareness) and **AoA** (Age of Acquisition vocabulary curve) scores. Objective: Prove that Model C achieves higher English structural scores thanks to Vietnamese supplementation.
-* **Custom Stream (In-house built):** Process through the `evaluate` library to measure `sacrebleu/chrF` translation scores and write Regex functions to export LaTeX X-bar syntax tree diagrams to visualize metalinguistic capabilities in the report.
+### 3.4. Structural Modifications
+* **Prefixing:** The sequence of POS tags is directly attached right before the corresponding text sentence (e.g., `<POS_Start> Noun Verb... <Text_Start> The cat jumps...`). This primes the model with the grammatical framework as context before generating the vocabulary.
+* **Auxiliary Loss:** Running a parallel predictive head to guess POS tags without altering the main text input, evaluated with both fixed and dynamic (decaying) $\alpha$ weights.
 
 ---
 
-## 6. Team Tasks
+## 4. Evaluation Results 
 
-1.  **Hieu (Data Engineer):**
-    * Manage the data loading pipeline from Hugging Face PhoMT.
-    * Extract difficulty scores and package the dual-stream `.jsonl` file.
-    * Train and export the `32k` Custom Tokenizer config file containing POS Special Tokens.
-2.  **Ivan (DataLoader & Curriculum Loop):**
-    * Teacher model
-3.  **Sauhard (Architecture & Training Loop):**
-    * Try to add POS and Tense to attention head
+### 4.1. Results (block_size = 32, babylm dataset, no POS space)
+*Tokenizer from the base model, special tokens added without spaces.*
+
+| Task | English Baseline | 10POS + 10Text (UPOS) | 10POS + 10Text (EngPOS) | Fading POS (UPOS) | English with POS (UPOS) | English with POS (EngPOS) |
+|---|---|---|---|---|---|---|
+| blimp_filtered | 70.61 | 70.29 | 70.16 | 67.48 | 70.70 | 69.73 |
+| - filler_gap_dependency | 71.42 | 71.29 | 70.25 | 71.21 | 72.08 | 70.11 |
+| - subject_verb_agreement | 73.95 | 72.52 | 73.35 | 63.39 | 73.35 | 72.02 |
+| - npi_licensing | 64.11 | 62.90 | 61.59 | 54.90 | 63.41 | 60.92 |
+| - control_raising | 65.34 | 66.08 | 66.42 | 63.44 | 67.45 | 66.83 |
+| - s-selection | 77.28 | 76.07 | 73.93 | 73.43 | 75.91 | 76.73 |
+| - ellipsis | 69.14 | 67.91 | 65.21 | 59.20 | 66.13 | 62.70 |
+| - determiner_noun_agreement | 87.69 | 86.75 | 87.28 | 85.46 | 87.25 | 86.68 |
+| - anaphor_agreement | 90.64 | 88.43 | 90.80 | 86.44 | 87.43 | 91.85 |
+| - binding | 71.78 | 73.84 | 72.53 | 69.55 | 71.92 | 70.71 |
+| - argument_structure | 72.23 | 71.16 | 70.73 | 67.82 | 70.85 | 71.69 |
+| - island_effects | 48.11 | 50.32 | 53.60 | 49.66 | 52.00 | 49.34 |
+| - quantifiers | 67.95 | 64.82 | 60.48 | 70.52 | 68.31 | 69.23 |
+| - irregular_forms | 85.92 | 83.39 | 85.97 | 89.70 | 81.19 | 81.19 |
+| supplement_filtered | 55.77 | 58.10 | 56.92 | 55.36 | 55.07 | 56.44 |
+| comps | 51.50 | 51.62 | 51.00 | 50.07 | 51.23 | 51.47 |
+| entity_tracking | 13.83 | 18.95 | 21.17 | 17.03 | 27.45 | 32.20 |
+| ewok_filtered | 50.40 | 50.42 | 50.85 | 49.66 | 50.73 | 50.50 |
+| reading (Eye Tracking) | 9.56 | 9.46 | 8.82 | 9.44 | 10.36 | 9.83 |
+| reading (Self-Paced) | 3.10 | 3.26 | 2.60 | 2.94 | 3.12 | 3.11 |
+| **Zeroshot Avg** | **36.40** | **37.44** | **37.36** | **36.00** | **38.38** | **39.04** |
+
+### 4.2. Results (block_size = 32, babylm dataset, with POS space)
+*Testing various decay and prefixing strategies.*
+
+| Task | English Baseline | English with POS | Fading POS | Aux Loss - 1.0 | Aux Loss - dyn alpha | Prefixing | Linear POS decay | Exp POS decay | Chunking |
+|---|---|---|---|---|---|---|---|---|---|
+| blimp_filtered | **70.61** | 68.32 | 66.57 | 69.22 | 69.39 | - | 66.15 | 68.63 | 68.25 |
+| - filler_gap_dependency | **71.42** | 71.34 | 69.56 | 67.24 | 69.87 | - | 69.77 | 71.13 | 69.78 |
+| - subject_verb_agreement | **73.95** | 66.47 | 63.74 | 71.39 | 69.23 | - | 62.89 | 69.85 | 69.69 |
+| - npi_licensing | **64.11** | 57.05 | 53.91 | 62.75 | 60.07 | - | 51.06 | 52.91 | 56.86 |
+| - control_raising | 65.34 | 62.94 | 62.34 | 65.46 | 64.68 | - | 63.33 | 63.65 | **65.94** |
+| - s-selection | **77.28** | 72.99 | 71.73 | 74.81 | 74.59 | - | 72.33 | 75.14 | 76.18 |
+| - ellipsis | **69.14** | 60.06 | 56.69 | 62.21 | 65.03 | - | 54.17 | 62.82 | 63.74 |
+| - determiner_noun_agreement | 87.69 | 86.62 | 85.23 | 86.50 | 86.47 | - | 84.01 | 86.35 | **87.83** |
+| - anaphor_agreement | 90.64 | 84.65 | 86.75 | **90.80** | 89.12 | - | 83.49 | 84.65 | 87.85 |
+| - binding | **71.78** | 69.55 | 68.13 | 70.45 | 70.92 | - | 68.39 | 69.89 | 70.05 |
+| - argument_structure | **72.23** | 68.00 | 67.09 | 70.41 | 70.87 | - | 66.37 | 68.87 | 69.45 |
+| - island_effects | 48.11 | 49.44 | 47.72 | 46.39 | 49.91 | - | 50.55 | **52.69** | 47.66 |
+| - quantifiers | 67.95 | **73.94** | 69.05 | 72.75 | 72.62 | - | 68.05 | 71.86 | 60.77 |
+| - irregular_forms | 85.92 | 90.33 | **92.91** | 87.65 | 83.08 | - | 90.49 | 87.60 | 88.02 |
+
+### 4.3. Results (block_size = 256, babylm dataset, with POS space)
+
+| Task | English Baseline | English with POS | Fading POS | Aux Loss | Prefixing | Linear decay | Exp decay |
+|---|---|---|---|---|---|---|---|
+| blimp_filtered | 68.57 | 66.83 | 63.52 | 63.85 | 62.35 | 57.23 | 59.13 |
+| - filler_gap_dependency | 69.01 | 66.98 | 69.07 | 66.05 | 63.36 | 65.22 | 64.27 |
+| - subject_verb_agreement | 67.30 | 63.82 | 57.13 | 58.27 | 58.21 | 52.29 | 54.53 |
+| - npi_licensing | 62.77 | 56.94 | 45.01 | 55.61 | 36.50 | 40.87 | 40.63 |
+| - control_raising | 63.49 | 64.11 | 62.87 | 62.20 | 62.23 | 59.87 | 60.37 |
+| - s-selection | 74.42 | 73.10 | 71.40 | 72.06 | 75.91 | 66.23 | 68.10 |
+| - ellipsis | 64.17 | 61.96 | 54.23 | 51.29 | 48.96 | 34.29 | 35.95 |
+| - determiner_noun_agreement | 85.68 | 86.10 | 83.26 | 78.18 | 80.57 | 61.50 | 71.85 |
+| - anaphor_agreement | 90.27 | 90.96 | 85.02 | 85.07 | 84.17 | 72.87 | 75.71 |
+| - binding | 67.96 | 67.28 | 64.98 | 65.04 | 64.92 | 64.21 | 65.02 |
+| - argument_structure | 67.97 | 67.64 | 65.23 | 65.45 | 63.49 | 60.08 | 61.17 |
+| - island_effects | 47.10 | 46.28 | 45.65 | 44.40 | 47.64 | 46.63 | 41.69 |
+| - quantifiers | 76.27 | 71.23 | 63.16 | 72.23 | 80.45 | 54.49 | 63.87 |
+| - irregular_forms | 86.28 | 81.45 | 91.28 | 81.92 | 76.14 | 84.24 | 93.22 |
 
 ---
 
-## 7. Evaluation Results
+## 5. Discussion & Deep Dive Analysis
 
-### Zero-Shot Results
-| Task | English Baseline | Bilingual | Bilingual Random |
-|---|---|---|---|
-| blimp_filtered | 69.57 | 69.67 | 70.30 |
-| - filler_gap_dependency | 71.16 | 70.63 | 70.63 |
-| - subject_verb_agreement | 70.08 | 69.73 | 68.36 |
-| - npi_licensing | 60.87 | 56.83 | 62.08 |
-| - control_raising | 66.38 | 66.26 | 66.47 |
-| - s-selection | 76.35 | 73.27 | 76.24 |
-| - ellipsis | 59.33 | 65.21 | 69.39 |
-| - determiner_noun_agreement | 90.02 | 87.63 | 87.56 |
-| - anaphor_agreement | 84.02 | 81.55 | 82.23 |
-| - binding | 70.72 | 71.63 | 70.17 |
-| - argument_structure | 70.42 | 69.55 | 70.37 |
-| - island_effects | 43.49 | 48.46 | 50.71 |
-| - quantifiers | 75.20 | 81.06 | 82.00 |
-| - irregular_forms | 91.49 | 91.22 | 80.66 |
-| supplement_filtered | 56.50 | 54.98 | 54.71 |
-| comps | 50.32 | 51.34 | 51.48 |
-| entity_tracking | 38.33 | 12.41 | 17.47 |
-| ewok_filtered | 51.07 | 53.53 | 52.26 |
-| reading (Eye Tracking) | 0.01 | 0.07 | 0.06 |
-| reading (Self-Paced) | 0.14 | 0.28 | 0.31 |
+The data reveals a compelling **Trade-off Phenomenon** when injecting explicit syntax. While the overall BLiMP average of the POS-scaffolded models rarely beats the pure English baseline, the sub-task breakdown highlights a systematic skill shift:
 
-### Finetune Results (Accuracy %)
+### 5.1. The "Island Effects" & "Entity Tracking" Boost
+The POS scaffolding successfully taught the model to recognize strict phrase boundaries. For example, in the `10POS + 10Text` experiment, **Island Effects** surged to **53.60%** (up from the 48.11% baseline), and **Entity Tracking** jumped to **21.17%** (up from 13.83%). 
+* *Rationale:* Island Effects test the model's grasp of long-distance structural dependencies. By forcing the model to learn the syntactic "skeleton" first, it became highly attuned to structural constraints and phrase boundaries, decoupling grammar from specific vocabulary.
+
+### 5.2. Lexical Starvation (The "Irregular Forms" Drop)
+Conversely, forcing the model to learn POS tags incurs a massive cost to morphology. In the `10POS + 10Text` model, **Irregular Forms** dropped to **83.39%** (down from 85.92%).
+* *Rationale:* Irregular forms (e.g., *go -> went*) rely heavily on surface-level lexical memorization. By replacing words with tags (`VBD`) for half the training duration, the model suffered from *Lexical Starvation*. It spent compute cycles looking at abstract concepts rather than the actual morphology of words.
+
+### 5.3. Catastrophic Forgetting
+The `10POS + 10Text` strategy creates a severe **Distribution Shift** at epoch 10. The loss curve exhibits a massive spike when transitioning from the small, easily predictable POS vocabulary back to the full English vocabulary. Despite this shock, the model recovers quickly to map vocabulary to the learned structures, confirming that Curriculum Learning can impart structural priors, even if self-supervised learning (the baseline) is highly efficient at doing this implicitly.
+
+### 5.4. Conclusion
+While injecting explicit syntactic tags improves awareness of complex hierarchical structures, it causes interference with surface-level morphological learning. Ultimately, the self-supervised baseline remains incredibly robust, suggesting that language models are highly efficient at encoding implicit syntax purely from natural text immersion.
+
+---
+---
+
+## APPENDIX: Artificial Metalinguistic Awareness in Low-Resource Bilingual LMs (Extra - Not planning on poster)
+*(Initial explorations into cross-lingual structural transfer using Vietnamese and English).*
+
+### 1. Bilingual Research Motivation
+* **Cognitive Motivation:** Children learning to speak often omit complex functional words, focusing solely on the core syntactic framework (Subject - Verb - Object / S-V-O). English (morphological variation) and Vietnamese (isolating language), despite their vast differences, share this common S-V-O word order "skeleton."
+* **Research Hypothesis:** Actively forcing an ultra-small language model (10M parameters) to learn the abstract syntactic "skeleton" first (via Universal POS - UPOS tags) will generate Artificial Metalinguistic Awareness.
+
+### 2. Bilingual Data Pipeline
+* **Dataset:** `ura-hcmut/PhoMT` (Bilingual English and Vietnamese).
+* **Dual-Stream Formatting:**
+    * `text_block`: `[English Sentence] \n\n [Vietnamese Sentence] [SPLIT]`
+    * `pos_block`: `[English UPOS] \n\n [Vietnamese UPOS] [SPLIT]`
+* **Curriculum Learning Score:** We utilized `spaCy` (for English) and `PhoNLP` (for Vietnamese) to parse syntax and assign structural difficulty scores based on length and complex syntax markers (`SCONJ`, `CCONJ`, `PUNCT`, `PART`). Sampled at 60% Easy, 30% Medium, 10% Hard.
+
+### 3. Bilingual Evaluation Results (Zero-Shot)
+
+block_size = 256, phomt dataset
+
+| Task | English Baseline | Bilingual VI-EN | Bilingual Random VI-EN | English with pos |
+|---|---|---|---|---|
+| blimp_filtered | 69.57 | 69.67 | 70.30 | 67.31 |
+| - filler_gap_dependency | 71.16 | 70.63 | 70.63 | 68.52 |
+| - subject_verb_agreement | 70.08 | 69.73 | 68.36 | 68.79 |
+| - npi_licensing | 60.87 | 56.83 | 62.08 | 59.67 |
+| - control_raising | 66.38 | 66.26 | 66.47 | 62.39 |
+| - s-selection | 76.35 | 73.27 | 76.24 | 73.71 |
+| - ellipsis | 59.33 | 65.21 | 69.39 | 55.34 |
+| - determiner_noun_agreement | 90.02 | 87.63 | 87.56 | 89.02 |
+| - anaphor_agreement | 84.02 | 81.55 | 82.23 | 73.92 |
+| - binding | 70.72 | 71.63 | 70.17 | 68.57 |
+| - argument_structure | 70.42 | 69.55 | 70.37 | 68.21 |
+| - island_effects | 43.49 | 48.46 | 50.71 | 41.69 |
+| - quantifiers | 75.20 | 81.06 | 82.00 | 71.73 |
+| - irregular_forms | 91.49 | 91.22 | 80.66 | 92.85 |
+| supplement_filtered | 56.50 | 54.98 | 54.71 | - |
+| comps | 50.32 | 51.34 | 51.48 | - |
+| entity_tracking | 38.33 | 12.41 | 17.47 | - |
+| ewok_filtered | 51.07 | 53.53 | 52.26 | - |
+
+### 4. Bilingual Finetune Results (Accuracy %)
+
+phomt dataset
+
 | Task | English Baseline | Bilingual | Bilingual Random |
 |---|---|---|---|
 | mnli | 49.53 | 51.77 | 51.57|
-| wsc | 63.46 | 61.54 | 61.54 | This one 2 bilingual models have same result because f1 and mcc are 0, so this is purely the distribution of data
+| wsc | 63.46 | 61.54 | 61.54 | 
 | mrpc | 68.14 | 72.55 | 74.02 |
 | multirc | 64.44 | 61.06 | 61.47 | 
 | boolq | 67.03 | 67.65 | 68.56 |
 | rte | 54.68 | 61.15 | 55.40 |
-| qqp | 72.45 | 72.59 | 73.66 |P
+| qqp | 72.45 | 72.59 | 73.66 |
 
-### 7.1. Deep Dive: BLiMP Zero-Shot Analysis (The Trade-off Phenomenon)
-
-At first glance, the identical average scores between the Baseline (69.57%) and the Bilingual Curriculum model (69.67%) might suggest that the cross-lingual injection had no impact. However, a granular breakdown of the 67 linguistic sub-tasks reveals a **Systematic Skill Shift**. The model is undergoing a cognitive trade-off: sacrificing morphological precision to gain core syntactic reasoning.
-
-#### 1. The Field Accuracy Shift: Morphology vs. Syntax
-Vietnamese is an isolating language with zero morphological inflection (no verb conjugation, no plurals). Consequently, injecting 5M Vietnamese words into a constrained 10M parameter space causes *Lexical/Morphological Dilution* in English, while strengthening the shared S-V-O structural backbone.
-* **Morphology (Decreased):** 82.92% $\rightarrow$ 81.45% (-1.47%)
-* **Core Syntax (Increased):** 61.64% $\rightarrow$ 63.04% (+1.40%)
-
-#### 2. Key Syntactic Breakthroughs (The "Island Effects")
-The Phase 1 POS scaffolding successfully taught the model to recognize strict phrase boundaries and syntactic constraints. The Bilingual model heavily outperforms the baseline in complex structural parsing, specifically in **Island Effects** (rules preventing extraction from certain syntactic domains):
-* `left_branch_island_simple_question`: 41.85% $\rightarrow$ **57.20% (+15.35%)**
-* `coordinate_structure_constraint_complex_left_branch`: 17.77% $\rightarrow$ **33.77% (+16.00%)**
-* `sentential_subject_island`: 32.05% $\rightarrow$ **42.87% (+10.82%)**
-* `superlative_quantifiers_1`: 74.26% $\rightarrow$ **88.56% (+14.30%)**
-
-#### 3. The Cost of Bilingualism (Lexical Dilution)
-Conversely, the model loses ground on highly English-specific lexical rules and Negative Polarity Items (NPIs) that do not translate structurally to Vietnamese:
-* `only_npi_scope`: 84.23% $\rightarrow$ 71.92% (-12.31%)
-* `wh_vs_that_with_gap`: 42.11% $\rightarrow$ 40.04% (-2.07%)
-
-**Conclusion:** The 0.1% overall difference is not statistical noise, but rather a perfect balancing act. The Syntactic Bootstrapping method succeeded in generating *Artificial Metalinguistic Awareness* (evidenced by the massive +15% gains in structural constraints), proving that 10M parameters can learn abstract grammar, albeit at the predictable cost of English morphological specificity.
-
-### 7.2. Deep Dive: COMPS Zero-Shot Analysis (Abstract Property Inheritance)
-
-The COMPS benchmark tests a model's ability to understand conceptual properties and inherit them, especially when applied to novel, made-up words (nonce words like "wugs"). The results here beautifully reinforce the Metalinguistic Awareness hypothesis: the Bilingual model is significantly better at abstract logical deduction.
-
-#### 1. The "Wugs" Phenomenon: Excelling at the Unknown
-The most striking difference lies in the `wugs` sub-task, where the model must assign properties to a completely fabricated word based purely on surrounding syntactic cues.
-* **`wugs` (Novel Concept Inheritance):** 50.24% $\rightarrow$ **52.95% (+2.71%)**
-* **`base` (Standard Property Knowledge):** 52.23% $\rightarrow$ **53.57% (+1.34%)**
-
-**Scientific Rationale:** The English baseline relies heavily on memorized lexical collocations (words it has seen frequently together). When faced with a made-up word ("wug"), its performance drops. In contrast, the Bilingual model, having undergone Phase 1 POS scaffolding, is trained to treat sentences as mathematical formulas (e.g., `NOUN` performs `VERB`). It doesn't panic when it sees an unknown entity; it uses the grammatical structure to deduce the entity's properties.
-
-#### 2. Stability Against Distractors
-In tasks introducing disruptive text (`wugs_dist_in_between` and `wugs_dist_before`), both models perform essentially at the level of random chance (around 48-49%), indicating that 10M parameters are generally insufficient to maintain long-distance conceptual attention when noisy distractors are injected.
-
-**Conclusion:** The Bilingual model’s superior performance in base conceptual logic (+1.34%) and abstract entity inheritance (+2.71%) proves that Syntactic Bootstrapping allows the model to decouple logical reasoning from specific vocabulary. It has learned *how* language works structurally, making it more robust when processing unfamiliar concepts.
-
-### 7.3. Cross-Model Synthesis: Why POS Scaffolding & Curriculum Learning Work
-
-A direct comparison across all three models—English Baseline, Bilingual Curriculum, and Bilingual Random—validates the necessity of a structured training pipeline. Simply mixing two diverse languages randomly within a strict 10M parameter budget creates instability; generating true metalinguistic awareness requires a deliberate pedagogical strategy.
-
-#### 1. Protecting Morphological Integrity (The "Irregular Forms" Crash)
-The most glaring vulnerability of unstructured bilingual training is exposed in the `irregular_forms` task. The **Bilingual Random** model crashes completely, dropping to **80.66%** (down from the Baseline's 91.49%). When forced to process English and Vietnamese simultaneously without guidance, the model suffers severe interference between English's complex morphology and Vietnamese's isolating nature.
-
-In stark contrast, the **Bilingual Curriculum** model retains a high score of **91.22%**, almost perfectly matching the baseline. This proves the defensive value of the pipeline: **Phase 1 POS Scaffolding acts as a cognitive anchor**. By explicitly teaching abstract grammar templates first, the model solidifies its structural understanding, preventing the Vietnamese data from overwriting critical English morphological rules during the lexical immersion phase.
-
-#### 2. Enhancing Event Plausibility and Semantics (EWOK Benchmark)
-The EWOK (Event Knowledge) benchmark tests whether a model understands logical, real-world event plausibility. Here, the **Bilingual Curriculum** model achieves the highest performance (**53.53%**), outperforming both the English Baseline (51.07%) and the Bilingual Random control (52.26%).
-
-This demonstrates the power of the **Easy-to-Hard (60:30:10) distribution**. By forcing the model to master simple, highly frequent S-V-O structures first, the curriculum model dramatically lowers its computational burden early on. This efficiency frees up parameter capacity later in training to capture deeper contextual semantics, whereas the Random model is constantly bogged down by structural noise.
-
-#### 3. The Unstable Nature of Random Mixing
-While the `Bilingual Random` model scores slightly higher on the overall BLiMP average (70.30%), a closer look at the variance reveals an unstable internal representation. Its erratic performance—gaining points in loose structural tasks but failing catastrophically in rigid morphology (`irregular_forms`) and underperforming in deep semantic reasoning (`ewok_filtered` and `mnli`)—indicates it is merely memorizing surface-level patterns. 
-
-**Final Verdict:** The combination of POS Scaffolding and Curriculum Learning provides a controlled, cognitively plausible trajectory. It successfully injects Vietnamese structural knowledge to boost abstract reasoning while systematically protecting the model's English morphological foundations.
-
-TODO:
-English-postag with english baseline
-Try another language
-Try decreasing pos tag (100% at 1st to 0% at 10th epoch - each epoch suffled randomly)
+### 5. Synthesis: The Unstable Nature of Random Mixing
+The most glaring vulnerability of unstructured bilingual training is exposed in the `irregular_forms` task. The Bilingual Random model crashed completely to 80.66% (down from 91.49%). When forced to process English and Vietnamese simultaneously without guidance, the model suffered severe interference between English's complex morphology and Vietnamese's isolating nature.

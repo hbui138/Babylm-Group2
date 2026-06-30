@@ -27,9 +27,9 @@ def main():
     
     # Inject UPOS tags so BPE algorithm treats them as unbreakable single tokens
     upos_tags = ["NOUN", "PUNCT", "VERB", "PRON", "ADP", 
-				"DET", "ADJ", "AUX", "ADV", "CCONJ", 
-				"PROPN", "PART", "NUM", "SCONJ", "X", 
-				"INTJ", "SYM"]
+                "DET", "ADJ", "AUX", "ADV", "CCONJ", 
+                "PROPN", "PART", "NUM", "SCONJ", "X", 
+                "INTJ", "SYM"]
     tokenizer.add_special_tokens({'additional_special_tokens': upos_tags})
     
     if tokenizer.pad_token is None:
@@ -56,8 +56,10 @@ def main():
 
     # 3. Tokenization Subroutines
     def tokenize_pos(examples):
+        # Remove spaces so special tokens match exactly without 'Ġ' space tokens
+        cleaned_pos = [str(text).replace(" ", "") for text in examples["pos"]]
         # Append EOS token to mark sequence boundaries
-        texts_with_eos = [str(text) + " <|endoftext|>" for text in examples["pos"]]
+        texts_with_eos = [text + "<|endoftext|>" for text in cleaned_pos]
         return tokenizer(texts_with_eos)
 
     def tokenize_text(examples):
@@ -92,49 +94,13 @@ def main():
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     # =========================================================================
-    # EXPERIMENT A: PURE ENGLISH BASELINE (10 Epochs, Text only, Shuffled)
-    # =========================================================================
-    print("\n=== RUNNING EXPERIMENT A: ENGLISH BASELINE IMMERSION ===")
-    model_baseline = initialize_fresh_model()
-
-    # Standard shuffling for the baseline
-    baseline_dataset = text_dataset.shuffle(seed=42)
-
-    baseline_args = TrainingArguments(
-        output_dir="./babylm_baseline_english_output",
-        num_train_epochs=10,
-        per_device_train_batch_size=128,
-        save_strategy="no",
-        logging_steps=100,
-        prediction_loss_only=True,
-        fp16=True,
-        dataloader_num_workers=4,
-    )
-
-    trainer_baseline = Trainer(
-        model=model_baseline,
-        args=baseline_args,
-        data_collator=data_collator,
-        train_dataset=baseline_dataset,
-    )
-
-    trainer_baseline.train()
-    trainer_baseline.save_model("./babylm_model_english_baseline")
-    print("Experiment A (Baseline) completed.")
-
-    # Free up memory before starting the next experiment
-    del model_baseline
-    del trainer_baseline
-    torch.cuda.empty_cache()
-
-    # =========================================================================
     # EXPERIMENT B - PHASE 1: SCAFFOLDING BOOTSTRAP (1 Epoch, POS only, Sorted)
     # =========================================================================
     print("\n=== RUNNING EXPERIMENT B - PHASE 1: POS SCAFFOLDING ===")
     model_curriculum = initialize_fresh_model()
 
     phase1_args = TrainingArguments(
-        output_dir="./babylm_phase1_english_pos_output",
+        output_dir="./babylm_phase1_english_pos_nospace_output",
         num_train_epochs=1,
         per_device_train_batch_size=128,
         dataloader_num_workers=4,
@@ -153,7 +119,7 @@ def main():
     )
     
     trainer_phase1.train()
-    trainer_phase1.save_model("./models/babylm_phase1_english_pos")
+    trainer_phase1.save_model("./models/babylm_phase1_english_pos_nospace")
     print("Phase 1 completed.")
 
     # =========================================================================
@@ -165,7 +131,7 @@ def main():
     phase2_dataset = text_dataset.shuffle(seed=42)
 
     phase2_args = TrainingArguments(
-        output_dir="./babylm_phase2_english_pos_output",
+        output_dir="./babylm_phase2_english_pos_nospace_output",
         num_train_epochs=9,
         per_device_train_batch_size=128,
         dataloader_num_workers=4,
@@ -184,8 +150,8 @@ def main():
     )
 
     trainer_phase2.train()
-    trainer_phase2.save_model("./models/babylm_model_english_pos")
-    print("Phase 2 completed. All experiments finished successfully.")
+    trainer_phase2.save_model("./models/babylm_model_english_pos_nospace")
+    print("Phase 2 completed. Curriculum experiments finished successfully.")
 
 if __name__ == "__main__":
     main()
