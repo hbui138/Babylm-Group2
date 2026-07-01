@@ -53,7 +53,7 @@ Switching abruptly from POS to Text causes massive distribution shifts. We teste
 
 ---
 
-## 4. Evaluation Results 
+## 4. Evaluation Results (block_size = context size)
 
 ### 4.1. Results (block_size = 32, babylm dataset, no POS space)
 *Tokenizer from the base model, special tokens added without spaces.*
@@ -81,6 +81,17 @@ Switching abruptly from POS to Text causes massive distribution shifts. We teste
 | reading (Eye Tracking) | 9.56 | 9.46 | 8.82 | 9.44 | 10.36 | 9.83 |
 | reading (Self-Paced) | 3.10 | 3.26 | 2.60 | 2.94 | 3.12 | 3.11 |
 | **Zeroshot Avg** | **36.40** | **37.44** | **37.36** | **36.00** | **38.38** | **39.04** |
+
+| Task (Finetune) | English Baseline | 10POS + 10Text (UPOS) | 10POS + 10Text (EngPOS) | Fading POS (UPOS) | English with POS (UPOS) | English with POS (EngPOS) |
+|---|---|---|---|---|---|---|
+| boolq | 67.83 | 67.40 | 66.79 | 69.05 | 68.32 | 68.13 |
+| mnli | 47.33 | 43.34 | 44.72 | 45.31 | 44.13 | 45.46 |
+| mrpc | 71.08 | 71.57 | 72.55 | 72.06 | 69.61 | 69.61 |
+| multirc | 65.88 | 64.81 | 65.14 | 65.97 | 65.59 | 65.59 |
+| qqp | 69.85 | 69.80 | 68.46 | 69.78 | 67.83 | 69.31 |
+| rte | 56.83 | 56.83 | 60.43 | 56.12 | 56.83 | 56.12 |
+| wsc | 63.46 | 61.54 | 69.23 | 63.46 | 65.38 | 67.31 |
+| **Finetune Avg** | **63.18** | **62.18** | **63.90** | **63.11** | **62.53** | **63.08** |
 
 ### 4.2. Results (block_size = 32, babylm dataset, with POS space)
 *Testing various decay and prefixing strategies.*
