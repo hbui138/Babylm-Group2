@@ -123,6 +123,24 @@ Switching abruptly from POS to Text causes massive distribution shifts. We teste
 
 ---
 
+### 📊 Key Findings: Data-Centric Scaffolding (GPT-2)
+
+**1. The Syntax-Lexicon Trade-off (The "Double-Edged Sword" Effect)**
+- **Structural Superiority:** Models exposed to explicit POS tags significantly outperform the baseline on linguistic tasks requiring long-distance structural awareness. For instance, in **Island Effects**, the `10POS + 10Text (EngPOS)` model achieves **53.60** (vs. Baseline 48.11). 
+- **Entity Tracking Breakthrough:** The most dramatic improvement is observed in **Entity Tracking**, where explicit syntactic markers act as "attention beacons" to help the model link subjects across sentences. The `English with POS (EngPOS)` configuration reaches **32.20**, more than doubling the baseline score (**13.83**).
+- **Lexical Starvation:** Conversely, replacing raw text with POS tags deprives the model of surface-level vocabulary exposure. This causes noticeable performance drops in memory-reliant morphological tasks like **Irregular Forms**, where `English with POS` variants drop to **81.19** (vs. Baseline 85.92).
+
+**2. Fine-grained (EngPOS) vs. Coarse-grained (UPOS)**
+- Providing the model with detailed syntax (Penn Treebank tags / `EngPOS`) proves superior to coarse-grained syntax (Universal POS / `UPOS`) for tracking complex dependencies. This is clearly reflected in `Anaphor Agreement` (91.85 vs. 87.43) and `Entity Tracking` (32.20 vs. 27.45) under the `English with POS` configurations.
+
+**3. Curriculum Strategy Comparison**
+- **English with POS (Warm-up/Interleaved):** This strategy achieves the highest overall **Zeroshot Average (39.04)**. By integrating POS effectively without completely overwriting the text distribution, the model successfully balances grammatical scaffolding with necessary lexical exposure.
+- **Sequential (10POS + 10Text):** While showing solid structural gains (boosting Island Effects and Binding), it suffers from the distribution shift at epoch 10 (Catastrophic Forgetting), resulting in a moderate Zero-shot average (~37.40).
+- **Fading POS:** Yields the lowest overall performance (36.00). The continuous, epoch-by-epoch shift in the data distribution likely causes representation instability (interference), negating the intended benefits of a smooth curriculum.
+
+**Summary for Poster**
+Injecting explicit syntax via data preprocessing does not uniformly boost language modeling. Instead, it acts as a **structural catalyst**—greatly enhancing the model's ability to parse complex syntax trees and track entities, but requiring careful curriculum design to prevent the loss of surface-level vocabulary memorization.
+
 ## 5. Discussion & Deep Dive Analysis
 
 The data reveals a compelling **Trade-off Phenomenon** when injecting explicit syntax. While the overall BLiMP average of the POS-scaffolded models rarely beats the pure English baseline, the sub-task breakdown highlights a systematic skill shift:
