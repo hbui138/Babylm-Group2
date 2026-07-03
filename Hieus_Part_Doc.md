@@ -24,6 +24,7 @@ By feeding a language model the underlying syntactic skeletons (POS tags) before
 ---
 
 ## 2. Data Design: The "No Space" Tokenizer Trick
+For the methods, we used UPOS and EngPOS for each experiment to see the effect of Universal POS or English specific Penntreebank tags.
 To teach the model explicit POS tags without expanding the parameter budget or altering the tokenizer size, we manipulated the data formatting:
 * **The Problem:** Standard BPE tokenizers treat preceding spaces (`Ġ`) as part of the token, fragmenting special tags (e.g., splitting into `Ġ` and `NOUN`).
 * **The Solution:** We stripped all spaces from the POS tag sequences before training. 
