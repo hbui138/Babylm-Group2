@@ -79,6 +79,29 @@ We tested multiple strategies to transition the model from abstract syntax to co
 | wsc | 63.46 | 61.54 | **69.23** | 63.46 | 65.38 | 67.31 |
 | **Finetune Avg** | 63.18 | 62.18 | **63.90** | 63.11 | 62.53 | 63.08 |
 
+### Zero-Shot Results (BLiMP & Reading/Tracking) - Relative to Baseline
+| Task | English Baseline | 10POS + 10Text (UPOS) | 10POS + 10Text (EngPOS) | Fading POS (UPOS) | English with POS (UPOS) | English with POS (EngPOS) |
+|---|---|---|---|---|---|---|
+| blimp_filtered | 70.61 | -0.32 | -0.45 | -3.13 | +0.09 | -0.88 |
+| supplement_filtered | 55.77 | +2.33 | +1.15 | -0.41 | -0.70 | +0.67 |
+| comps | 51.50 | +0.12 | -0.50 | -1.43 | -0.27 | -0.03 |
+| entity_tracking | 13.83 | +5.12 | +7.34 | +3.20 | +13.62 | +18.37 |
+| ewok_filtered | 50.40 | +0.02 | +0.45 | -0.74 | +0.33 | +0.10 |
+| reading (Eye Tracking) | 9.56 | -0.10 | -0.74 | -0.12 | +0.80 | +0.27 |
+| reading (Self-Paced) | 3.10 | +0.16 | -0.50 | -0.16 | +0.02 | +0.01 |
+| **Zeroshot Avg** | 36.40 | +1.04 | +0.96 | -0.40 | +1.98 | +2.64 |
+
+### Downstream Finetuning Results (GLUE) - Relative to Baseline
+| Task (Finetune) | English Baseline | 10POS + 10Text (UPOS) | 10POS + 10Text (EngPOS) | Fading POS (UPOS) | English with POS (UPOS) | English with POS (EngPOS) |
+|---|---|---|---|---|---|---|
+| boolq | 67.83 | -0.43 | -1.04 | +1.22 | +0.49 | +0.30 |
+| mnli | 47.33 | -3.99 | -2.61 | -2.02 | -3.20 | -1.87 |
+| mrpc | 71.08 | +0.49 | +1.47 | +0.98 | -1.47 | -1.47 |
+| multirc | 65.88 | -1.07 | -0.74 | +0.09 | -0.29 | -0.29 |
+| qqp | 69.85 | -0.05 | -1.39 | -0.07 | -2.02 | -0.54 |
+| rte | 56.83 | 0.00 | +3.60 | -0.71 | 0.00 | -0.71 |
+| wsc | 63.46 | -1.92 | +5.77 | 0.00 | +1.92 | +3.85 |
+| **Finetune Avg** | 63.18 | -1.00 | +0.72 | -0.07 | -0.65 | -0.10 |
 ---
 
 ## 5. Key Findings & Discussion
